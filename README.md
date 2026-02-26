@@ -21,6 +21,7 @@ A collection of standalone bash utility scripts for media processing and develop
 | `convert-mk4-to-h265.sh` | Convert MKV to MP4 with H.265/HEVC encoding |
 | `convert-videos-to-ogv.sh` | Convert MP4 to OGV format |
 | `create-posters.sh` | Extract thumbnail frame from MP4 videos at 1 second mark |
+| `trim-worthless-frames.sh` | Remove stale video time from screen recordings |
 | `remove-video-files-in-folders.sh` | Delete videos at depth 2 and move compressed files up |
 
 ## Development Workflow
