@@ -11,7 +11,7 @@ find . -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \) -exec s
     width=$(identify -format "%w" "$1")
     height=$(identify -format "%h" "$1")
     if [ $width -gt 2000 ] || [ $height -gt 2000 ]; then
-        magick "$1" -resize "2000x2000>" "$1"
+        magick "$1" -background white -alpha remove -resize "2000x2000>" "$1"
         echo "Resized $1"
     fi
 ' sh {} \;
