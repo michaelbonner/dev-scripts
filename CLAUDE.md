@@ -28,7 +28,7 @@ This is a collection of standalone bash utility scripts, primarily for media pro
 - **bun-out-pr.sh** - Check outdated deps, update with Bun, create PR via GitHub CLI
 - **npm-out-pr.sh** - Check outdated deps, update with npm, create PR via GitHub CLI
 - **tar-up-all-folders.sh** - Create .tar.gz archives for all directories
-- **commit-timelog.sh** - Walk every git repo nested under the current directory and write `timelog.txt`: one line per commit (`timestamp  repo-path  subject`), sorted oldest→newest with a blank line between each calendar date. Config block at top sets `AUTHORS` (regex matched case-insensitively against commit author name) and `SINCE` (default `90 days ago`)
+- **commit-timelog.sh** - Walk every git repo nested under the current directory and write `timelog.txt`: one line per commit (`timestamp  repo-path  subject`), sorted oldest→newest with a blank line between each calendar date. Scans all branches (`git log --all`, local and remote-tracking), not just the checked-out branch. Config block at top sets `AUTHORS` (regex matched case-insensitively against commit author name) and `SINCE` (default `90 days ago`)
 - **timelog-by-project.sh** - Chunk `timelog.txt` into billable projects using a `timelog-projects-key.txt` mapping (`folder : Project Name`, or `folder : ignore` to drop). Keeps the same commit-line format but groups commits by day (newest first) under `===== date =====` headers, and within each day by project (alphabetically). Keys match a repo's leaf folder name case- and hyphen-insensitively (longest match wins); each day, unlisted repos group under `Unmatched` and `ignore`-marked repos under `Ignored` (both last). Config block sets `INPUT`, `KEY`, `OUTPUT`
 
 ## Required Tools

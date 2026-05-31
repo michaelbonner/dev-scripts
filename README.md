@@ -81,7 +81,8 @@ QUALITY=80 SPEED=6 ./convert-jpegs-to-avif.sh
 `commit-timelog.sh` is run from a parent folder holding your repos (they can be
 nested in subfolders) and writes `timelog.txt` there — one line per commit
 (`timestamp  repo-path  subject`), sorted oldest→newest with a blank line
-between each calendar date. Edit the config block at the top of the script to
+between each calendar date. It scans all branches (local and remote-tracking),
+not just the checked-out branch. Edit the config block at the top of the script to
 change the author filter (`AUTHORS`, matched against commit author name) or the
 date range (`SINCE`, default `90 days ago`):
 

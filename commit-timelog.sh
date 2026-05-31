@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # commit-timelog.sh — Build a chronological work log of your commits across
-# every git repo nested under the current directory.
+# every git repo nested under the current directory, spanning all branches
+# (local and remote-tracking), not just the checked-out branch.
 #
 # Writes ./timelog.txt with one line per commit:
 #   <YYYY-MM-DD HH:MM>  <repo folder>  <one-line commit subject>
@@ -37,6 +38,7 @@ while IFS= read -r gitdir; do
   rel="${repo#./}"
 
   git -C "$repo" log \
+    --all \
     --no-merges \
     --author="$AUTHORS" \
     --regexp-ignore-case \
