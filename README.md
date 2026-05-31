@@ -32,6 +32,8 @@ A collection of standalone bash utility scripts for media processing and develop
 | `bun-out-pr.sh`         | Check outdated deps, update with Bun, create PR via GitHub CLI                           |
 | `npm-out-pr.sh`         | Check outdated deps, update with npm, create PR via GitHub CLI                           |
 | `tar-up-all-folders.sh` | Create .tar.gz archives for all directories                                              |
+| `commit-timelog.sh`     | Write a chronological `timelog.txt` of your commits across every nested git repo         |
+| `timelog-by-project.sh` | Chunk `timelog.txt` into billable projects (via a folder→project key) grouped by day      |
 
 ## Requirements
 
@@ -74,4 +76,31 @@ Environment variables for `convert-jpegs-to-avif.sh`:
 
 ```bash
 QUALITY=80 SPEED=6 ./convert-jpegs-to-avif.sh
+```
+
+`commit-timelog.sh` is run from a parent folder holding your repos (they can be
+nested in subfolders) and writes `timelog.txt` there — one line per commit
+(`timestamp  repo-path  subject`), sorted oldest→newest with a blank line
+between each calendar date. Edit the config block at the top of the script to
+change the author filter (`AUTHORS`, matched against commit author name) or the
+date range (`SINCE`, default `90 days ago`):
+
+```bash
+cd ~/Development
+~/Development/scripts/commit-timelog.sh
+```
+
+`timelog-by-project.sh` then chunks that `timelog.txt` into billable projects.
+It reads a `timelog-projects-key.txt` mapping (`folder-name : Project Name`, or
+`folder : ignore` to drop a repo) and writes `timelog-by-project.txt` — the same
+commit lines, grouped by day (newest first) under `===== date =====` headers
+and, within each day, by project (alphabetically). A key matches a repo when its
+folder string appears in the repo's leaf folder name (case- and
+hyphen-insensitive, e.g. `crew-view` matches `crewview-rn`); the longest match
+wins. Each day, repos in no key group under `Unmatched` and repos marked
+`ignore` under `Ignored` (both last), so nothing is missed.
+
+```bash
+cd ~/Development
+~/Development/scripts/timelog-by-project.sh
 ```
