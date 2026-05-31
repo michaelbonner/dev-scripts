@@ -7,6 +7,10 @@ vcodec="libx264"
 crf=23
 preset="veryslow"
 
+# Skip re-encoding when a compressed output already exists and is at least
+# this many bytes (guards against leftover empty/partial files from a crash).
+min_size_bytes=$((100 * 1024)) # 100 KB
+
 # Root directory (first arg) or current dir
 root="${1:-.}"
 
@@ -26,17 +30,19 @@ while IFS= read -r -d '' infile; do
   mkdir -p "$outdir"
   outfile="$outdir/${base}-compressed.mp4"
 
-  # If output file exists, add a number suffix to make it unique
-  if [[ -e "$outfile" ]]; then
-    counter=2
-    while [[ -e "$outdir/${base}-compressed-${counter}.mp4" ]]; do
-      ((counter++))
-    done
-    outfile="$outdir/${base}-compressed-${counter}.mp4"
+  # Skip if a compressed output already exists with a realistic file size
+  if [[ -f "$outfile" ]]; then
+    size=$(stat -f%z "$outfile" 2>/dev/null || stat -c%s "$outfile" 2>/dev/null || echo 0)
+    if (( size >= min_size_bytes )); then
+      echo "Skipping (already compressed): $outfile"
+      echo
+      continue
+    fi
+    echo "Re-encoding (existing output too small): $outfile"
   fi
 
   echo "Compressing: $infile → $outfile"
-  ffmpeg -i "$infile" \
+  ffmpeg -y -i "$infile" \
     -c:v "$vcodec" \
     -preset "$preset" \
     -crf "$crf" \
