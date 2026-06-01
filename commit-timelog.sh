@@ -7,7 +7,7 @@
 # Writes ./timelog.txt with one line per commit:
 #   <YYYY-MM-DD HH:MM>  <repo folder>  <one-line commit subject>
 #
-# Lines are sorted oldest -> newest, with a blank line separating each
+# Lines are sorted newest -> oldest, with a blank line separating each
 # calendar date.
 #
 # Run from the parent folder that holds your repos (they can be nested in
@@ -31,12 +31,22 @@ TAB=$'\t'
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-# Walk every git repo under the current directory (-prune stops find from
-# descending into the .git directories themselves).
+# Walk every git repo under the current directory. We prune heavy dependency/
+# build dirs (node_modules, etc.) so find never descends into them — otherwise
+# it spends minutes crawling millions of nested files and the script appears to
+# hang. .git is pruned too (and printed) so find doesn't dig into git internals.
+PRUNE='node_modules .next dist build out vendor .turbo .cache coverage .venv venv'
+prune_expr=()
+for d in $PRUNE; do
+  prune_expr+=( -name "$d" -o )
+done
+
 while IFS= read -r gitdir; do
   repo="$(dirname "$gitdir")"
   rel="${repo#./}"
 
+  # </dev/null keeps git from inheriting the loop's stdin (the `find` pipe), so
+  # a stray prompt can never block on it.
   git -C "$repo" log \
     --all \
     --no-merges \
@@ -45,12 +55,12 @@ while IFS= read -r gitdir; do
     --since="$SINCE" \
     --date=format:'%Y-%m-%d %H:%M' \
     --pretty=tformat:"%ad${TAB}${rel}${TAB}%s" \
-    2>/dev/null >> "$tmp" || true
-done < <(find . -name .git -type d -prune)
+    </dev/null 2>/dev/null >> "$tmp" || true
+done < <(find . -type d \( "${prune_expr[@]}" -name .git \) -prune -name .git -print)
 
-# Sort by the leading timestamp (lexical == chronological for this format),
-# then print, inserting a blank line whenever the calendar date changes.
-sort "$tmp" | awk -F"$TAB" '
+# Sort by the leading timestamp, newest first (lexical == chronological for
+# this format), then print, inserting a blank line whenever the date changes.
+sort -r "$tmp" | awk -F"$TAB" '
   NF < 3 { next }
   {
     date = substr($1, 1, 10)
