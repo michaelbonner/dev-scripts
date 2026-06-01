@@ -6,20 +6,35 @@
 # Output (default ./timelog-by-project.txt) keeps the exact same commit line
 # format as the input, but groups commits by day (newest first), and within
 # each day by project (alphabetically). Each project header shows that day's
-# commit count for the project:
+# commit count and an estimated number of billable work hours:
 #
-#   ===== 2026-05-30 =====
+#   ===== 2026-05-30 =====   (est 9.5 work hours)
 #
-#   Willow Creek App (20)
+#   Willow Creek App (20 commits): Est 6.75 work hours
 #   2026-05-30 13:33  blackthorn-software/crewview-rn  Update i18n count
 #   2026-05-30 13:25  blackthorn-software/crewview-rn  fix: PR feedback
 #
-#   WWC Manager (4)
+#   WWC Manager (4 commits): Est 2.75 work hours
 #   2026-05-30 12:31  wasatch/wwc-manager  ...
 #
 # Within each day, repos in no key are grouped under "Unmatched" and repos
 # listed as "ignore" in the key under "Ignored" — both sorted last so nothing
 # billable slips through unnoticed.
+#
+# --- Hour estimates ---------------------------------------------------------
+# Commits are instants, not durations, so hours are estimated by ALLOCATING the
+# day's working span across projects, weighted by each project's share of that
+# day's commits. The span is SESSION-BASED to avoid counting idle time: a day's
+# (non-ignored) commits are clustered into sessions, where a gap longer than
+# SESSION_GAP_MINUTES (default 120) starts a new session. Each session
+# contributes its first→last duration plus a LEAD_IN_MINUTES (default 45)
+# ramp-up credit for work done before its first commit — so a lone commit is
+# worth the lead-in alone, and a quiet afternoon between two bursts is NOT
+# billed. Ignored repos are non-billable: no estimate, and they never affect the
+# span or the split. Each project's hours are rounded to ROUND_MINUTES, with
+# leftover rounding units handed to the projects with the largest fractional
+# remainder, so the per-project estimates sum exactly to the day total shown in
+# the date header.
 #
 # Key file format (see timelog-projects-key.txt):
 #   # comments and blank lines are ignored
@@ -38,6 +53,9 @@ set -euo pipefail
 INPUT='timelog.txt'                  # produced by commit-timelog.sh
 KEY='timelog-projects-key.txt'       # folder → project mapping
 OUTPUT='timelog-by-project.txt'
+SESSION_GAP_MINUTES=120              # a gap longer than this starts a new work session
+LEAD_IN_MINUTES=45                   # ramp-up time credited before each session's first commit
+ROUND_MINUTES=15                     # round each project's estimate to this granularity
 # ----------------------------------------------------------------------------
 
 if [[ ! -f "$INPUT" ]]; then
@@ -122,31 +140,113 @@ awk '
 ' "$KEY" "$INPUT" \
 | LC_ALL=C sort -t"$TAB" -k1,1 -k2,2 -k3,3 > "$sorted"
 
-# Stage 2: emit grouped output. Read the sorted data twice — first to count
-# commits per (day, project) so each header can show that day's count, then to
-# print the day/project headers and commit lines.
-awk -F"$TAB" '
-  FNR == NR {                             # pass 1: per-(day, project) counts
-    cnt[substr($4, 1, 10) SUBSEP $5]++
+# Stage 2: emit grouped output. Read the sorted data twice — pass 1 tallies
+# per-(day, project) commit counts and each day's commit-time span, then derives
+# an estimated billable-hours allocation per (day, project); pass 2 prints the
+# day/project headers (with counts + estimates) and the commit lines.
+awk -F"$TAB" \
+    -v gap="$SESSION_GAP_MINUTES" -v leadin="$LEAD_IN_MINUTES" -v roundmin="$ROUND_MINUTES" '
+  function fmt(h,   s) {                   # trim trailing zeros: 9.00->9, 2.50->2.5
+    s = sprintf("%.2f", h)
+    sub(/\.?0+$/, "", s)
+    return s
+  }
+  # Allocate one day d total span across its (non-ignored) projects, weighted by
+  # commit share, rounded to whole units with largest-remainder distribution so
+  # the per-project hours sum exactly to the day total. The span is session-
+  # based: cluster the day commit times, sum each session first->last duration
+  # plus a lead-in credit, so idle gaps between bursts are not billed.
+  function allocate(d,   i, j, p, n, key, sstart, prev, span, sessions, units, total, exact, fl, assigned, leftover, bi, bf) {
+    delete fl_u; delete frac; delete st
+    total = dtot[d]                         # day total billable commits
+    dayhours[d] = 0
+    if (total <= 0) return
+    for (i = 1; i <= total; i++) st[i] = tlist[d SUBSEP i]
+    for (i = 2; i <= total; i++) {          # insertion sort commit times ascending
+      key = st[i]; j = i - 1
+      while (j >= 1 && st[j] > key) { st[j + 1] = st[j]; j-- }
+      st[j + 1] = key
+    }
+    span = 0; sessions = 1; sstart = st[1]; prev = st[1]
+    for (i = 2; i <= total; i++) {           # sum session durations, split on gaps
+      if (st[i] - prev > gap) { span += prev - sstart; sessions++; sstart = st[i] }
+      prev = st[i]
+    }
+    span += prev - sstart                    # close the final session
+    span += sessions * leadin                # ramp-up credit per session
+    units = int(span / roundmin + 0.5)       # span in whole rounding units
+    dayhours[d] = units * roundmin / 60.0
+    if (units <= 0) return
+    assigned = 0
+    for (i = 1; i <= np[d]; i++) {
+      p = pname[d SUBSEP i]
+      if (p == "Ignored") continue
+      exact = units * cnt[d SUBSEP p] / total
+      fl = int(exact)
+      fl_u[i] = fl; frac[i] = exact - fl
+      assigned += fl
+    }
+    leftover = units - assigned
+    while (leftover-- > 0) {                 # hand spare units to largest remainders
+      bi = -1; bf = -1
+      for (i = 1; i <= np[d]; i++) {
+        p = pname[d SUBSEP i]
+        if (p == "Ignored") continue
+        if (frac[i] > bf) { bf = frac[i]; bi = i }
+      }
+      if (bi < 0) break
+      fl_u[bi]++; frac[bi] = -1
+    }
+    for (i = 1; i <= np[d]; i++) {
+      p = pname[d SUBSEP i]
+      if (p == "Ignored") continue
+      hours[d SUBSEP p] = fl_u[i] * roundmin / 60.0
+    }
+  }
+
+  FNR == NR {                              # pass 1: counts + per-day commit times
+    date = substr($4, 1, 10); proj = $5
+    cnt[date SUBSEP proj]++
+    if (!((date SUBSEP proj) in seenpd)) { # register projects per day, in sorted order
+      seenpd[date SUBSEP proj] = 1
+      np[date]++
+      pname[date SUBSEP np[date]] = proj
+    }
+    if (proj != "Ignored") {               # ignored repos are non-billable
+      dtot[date]++
+      tlist[date SUBSEP dtot[date]] = substr($4, 12, 2) * 60 + substr($4, 15, 2)
+    }
+    if (!seenday[date]) { seenday[date] = 1; days[++nd] = date }
     next
   }
-  # pass 2: emit
-  FNR == 1 { print "Timelog grouped by day, then project"; print "" }
+
+  FNR == 1 {                               # between passes: allocate every day
+    for (i = 1; i <= nd; i++) allocate(days[i])
+    print "Timelog grouped by day, then project"; print ""
+  }
+
   {
     line = $4; proj = $5
     date = substr(line, 1, 10)
     if (date != curdate) {
       if (printed) print ""
-      print "===== " date " ====="
+      print "===== " date " =====   (est " fmt(dayhours[date]) " work hours)"
       print ""
-      print proj " (" cnt[date SUBSEP proj] ")"
+      print header(date, proj)
       curdate = date; curproj = proj; printed = 1
     } else if (proj != curproj) {
       print ""
-      print proj " (" cnt[date SUBSEP proj] ")"
+      print header(date, proj)
       curproj = proj
     }
     print line
+  }
+
+  function header(d, p,   c, label) {
+    c = cnt[d SUBSEP p]
+    label = p " (" c (c == 1 ? " commit" : " commits") ")"
+    if (p == "Ignored") return label       # non-billable: no estimate
+    return label ": Est " fmt(hours[d SUBSEP p]) " work hours"
   }
 ' "$sorted" "$sorted" > "$OUTPUT"
 
