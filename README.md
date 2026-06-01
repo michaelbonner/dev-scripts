@@ -95,7 +95,8 @@ cd ~/Development
 It reads a `timelog-projects-key.txt` mapping (`folder-name : Project Name`, or
 `folder : ignore` to drop a repo) and writes `timelog-by-project.txt` — the same
 commit lines, grouped by day (newest first) under `===== date =====` headers
-and, within each day, by project (alphabetically). A key matches a repo when its
+and, within each day, by project (alphabetically) with that day's commit count
+on each project header (e.g. `Willow Creek App (20)`). A key matches a repo when its
 folder string appears in the repo's leaf folder name (case- and
 hyphen-insensitive, e.g. `crew-view` matches `crewview-rn`); the longest match
 wins. Each day, repos in no key group under `Unmatched` and repos marked

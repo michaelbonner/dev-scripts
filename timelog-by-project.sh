@@ -5,15 +5,16 @@
 #
 # Output (default ./timelog-by-project.txt) keeps the exact same commit line
 # format as the input, but groups commits by day (newest first), and within
-# each day by project (alphabetically):
+# each day by project (alphabetically). Each project header shows that day's
+# commit count for the project:
 #
 #   ===== 2026-05-30 =====
 #
-#   Willow Creek App
+#   Willow Creek App (20)
 #   2026-05-30 13:33  blackthorn-software/crewview-rn  Update i18n count
 #   2026-05-30 13:25  blackthorn-software/crewview-rn  fix: PR feedback
 #
-#   WWC Manager
+#   WWC Manager (4)
 #   2026-05-30 12:31  wasatch/wwc-manager  ...
 #
 # Within each day, repos in no key are grouped under "Unmatched" and repos
@@ -25,10 +26,11 @@
 #   folder-name : Project Name
 #   other-folder : ignore
 # A key matches a repo when the key's folder string appears (case-insensitively,
-# ignoring hyphens) anywhere in the repo's leaf folder name — so
-# `denverwindowwellcovers` matches `wasatch/denverwindowwellcovers-astro` and
-# `crew-view` matches `crewview-rn`. When several keys match, the longest (most
-# specific) wins.
+# ignoring hyphens) in ANY segment of the repo's path — so
+# `denverwindowwellcovers` matches `wasatch/denverwindowwellcovers-astro`,
+# `crew-view` matches `crewview-rn`, and a parent-directory key like
+# `non-billable-projects : ignore` matches every repo beneath that folder. When
+# several keys match, the longest (most specific) wins.
 
 set -euo pipefail
 
@@ -48,16 +50,31 @@ if [[ ! -f "$KEY" ]]; then
 fi
 
 TAB=$'\t'
+sorted="$(mktemp)"
+trap 'rm -f "$sorted"' EXIT
 
-# Stage 1: tag every commit line with its project (and a sort key), dropping
-# ignored repos. Emits:  <sortkey>\t<project>\t<original line>
+# Stage 1: tag every commit line with a composite sort key + display project.
+# Emits 5 tab-separated fields:
+#   <comp(date)> <project-sort-key> <comp(timestamp)> <commit line> <display project>
+# comp() is the 9's-complement of each digit, so a plain ASCENDING sort of the
+# complemented date/time yields DESCENDING (newest-first) order — this avoids
+# BSD sort's unreliable mixed asc/desc per-key modifiers.
 awk '
+  function comp(s,   i, c, o) {           # 9s-complement of digits -> reverse sort
+    o = ""
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      o = o ((c >= "0" && c <= "9") ? (9 - c) : c)
+    }
+    return o
+  }
+
   # --- key file (read first) ---
   FNR == NR {
     line = $0
     sub(/\r$/, "", line)
     if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next
-    ci = index(line, ":")            # split on the FIRST colon only
+    ci = index(line, ":")                 # split on the FIRST colon only
     if (ci == 0) next
     folder = substr(line, 1, ci - 1)
     proj   = substr(line, ci + 1)
@@ -72,48 +89,66 @@ awk '
   }
 
   # --- timelog file ---
-  length($0) < 19 { next }           # skips blank date-separator lines too
+  length($0) < 19 { next }                # skips blank date-separator lines too
   {
-    date = substr($0, 1, 10)         # commit line is fixed-width: 16-char
-    rest = substr($0, 19)            # timestamp + 2 spaces, then repo path
-    di = index(rest, "  ")
-    repo = (di > 0) ? substr(rest, 1, di - 1) : rest
+    cdate = comp(substr($0, 1, 10))       # date, reverse-sorted
+    cts   = comp(substr($0, 1, 16))       # full timestamp, reverse-sorted
+    rest  = substr($0, 19)                # commit line is fixed-width
+    di    = index(rest, "  ")
+    repo  = (di > 0) ? substr(rest, 1, di - 1) : rest
     n = split(repo, parts, "/")
-    leaf = tolower(parts[n]); gsub(/-/, "", leaf)       # hyphen-insensitive
 
+    # Test every path segment (parent dirs and the leaf), so a directory-level
+    # key like `non-billable-projects : ignore` matches every repo beneath it.
+    # Longest matching key across all segments wins.
     bestlen = 0; bestproj = ""
-    for (i = 1; i <= nkeys; i++) {
-      if (index(leaf, kf[i]) > 0 && length(kf[i]) > bestlen) {
-        bestlen = length(kf[i]); bestproj = kp[i]
+    for (s = 1; s <= n; s++) {
+      seg = tolower(parts[s]); gsub(/-/, "", seg)       # hyphen-insensitive
+      for (i = 1; i <= nkeys; i++) {
+        if (index(seg, kf[i]) > 0 && length(kf[i]) > bestlen) {
+          bestlen = length(kf[i]); bestproj = kp[i]
+        }
       }
     }
-    # fields: date \t project-sort-key \t commit line \t display project
+    # Field 2 carries a rank prefix (0 projects, 1 Unmatched, 2 Ignored) so the
+    # two catch-all groups sort last — a numeric prefix avoids the locale quirk
+    # where punctuation sentinels collate before letters under BSD sort.
     if (bestlen > 0 && bestproj == "@IGNORE")
-         { print date "\t~~~~ Ignored\t"  $0 "\tIgnored" }   # Ignored sorts last
+         { print cdate "\t2 Ignored\t"   cts "\t" $0 "\tIgnored" }
     else if (bestlen == 0)
-         { print date "\t~~~ Unmatched\t" $0 "\tUnmatched" }
-    else { print date "\t" bestproj "\t"  $0 "\t" bestproj }
+         { print cdate "\t1 Unmatched\t" cts "\t" $0 "\tUnmatched" }
+    else { print cdate "\t0 " bestproj "\t" cts "\t" $0 "\t" bestproj }
   }
 ' "$KEY" "$INPUT" \
-| LC_ALL=C sort -t"$TAB" -k1,1r -k2,2 -k3,3r \
-| awk -F"$TAB" '
-    BEGIN { print "Timelog grouped by day, then project"; print "" }
-    {
-      date = $1; line = $3; proj = $4
-      if (date != curdate) {
-        if (printed) print ""
-        print "===== " date " ====="
-        print ""
-        print proj
-        curdate = date; curproj = proj; printed = 1
-      } else if (proj != curproj) {
-        print ""
-        print proj
-        curproj = proj
-      }
-      print line
+| LC_ALL=C sort -t"$TAB" -k1,1 -k2,2 -k3,3 > "$sorted"
+
+# Stage 2: emit grouped output. Read the sorted data twice — first to count
+# commits per (day, project) so each header can show that day's count, then to
+# print the day/project headers and commit lines.
+awk -F"$TAB" '
+  FNR == NR {                             # pass 1: per-(day, project) counts
+    cnt[substr($4, 1, 10) SUBSEP $5]++
+    next
+  }
+  # pass 2: emit
+  FNR == 1 { print "Timelog grouped by day, then project"; print "" }
+  {
+    line = $4; proj = $5
+    date = substr(line, 1, 10)
+    if (date != curdate) {
+      if (printed) print ""
+      print "===== " date " ====="
+      print ""
+      print proj " (" cnt[date SUBSEP proj] ")"
+      curdate = date; curproj = proj; printed = 1
+    } else if (proj != curproj) {
+      print ""
+      print proj " (" cnt[date SUBSEP proj] ")"
+      curproj = proj
     }
-  ' > "$OUTPUT"
+    print line
+  }
+' "$sorted" "$sorted" > "$OUTPUT"
 
 days="$(grep -c '^===== ' "$OUTPUT" || true)"
 commits="$(grep -c '^[0-9]\{4\}-' "$OUTPUT" || true)"
